@@ -12,7 +12,7 @@ dependencies = [
     "opentelemetry-instrumentation-google-genai>=0.1.0,<1.0.0",
     "gcsfs>=2024.11.0",
     "google-cloud-logging>=3.12.0,<4.0.0",
-    "google-cloud-aiplatform[evaluation,agent-engines]>=1.130.0",
+    "google-cloud-aiplatform[agent-engines,evaluation]>=1.130.0",
     "protobuf>=6.31.1,<7.0.0",
     "google-cloud-bigquery>=3.40.1",
     "google-cloud-storage>=3.9.0",
@@ -110,7 +110,7 @@ agent_directory = "app"
 
 # Generation context
 generated_at = "2026-03-15T15:31:09.623138+00:00"
-asp_version = "0.39.2"
+asp_version = "0.39.4"
 
 [tool.agent-starter-pack.create_params]
 # Parameters used during project creation

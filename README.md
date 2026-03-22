@@ -1,90 +1,92 @@
-# social-scrap-agent
+# Social Media Analytics Pipeline Agent
 
-ReAct agent with A2A protocol [experimental]
-Agent generated with [`googleCloudPlatform/agent-starter-pack`](https://github.com/GoogleCloudPlatform/agent-starter-pack) version `0.39.4`
+This is an automated, multi-agent data pipeline built with the [Google ADK (Agent Development Kit)](https://github.com/GoogleCloudPlatform/agent-starter-pack). It specializes in fetching, storing, and analyzing social media data (currently YouTube) through a conversational interface.
+
+## Overview
+
+The agent automates a full data lifecycle:
+
+1.  **Collection (Scraping)**: Fetches video data (titles, views, comments) using the YouTube Data API based on user keywords.
+2.  **Storage**: Temporarily stores data in NDJSON format and uploads it to **Google Cloud Storage (GCS)**.
+3.  **Data Engineering**: Automatically merges/appends the GCS data into a **BigQuery** table for persistent storage.
+4.  **AI Analytics**: Queries the BigQuery dataset using natural language to SQL conversion, providing structured summaries and **Looker Studio** visualization links.
+
+## Multi-Agent Architecture
+
+This project uses an orchestrated multi-agent pattern:
+
+-   **`root_coordinator`**: The main entry point that manages the pipeline flow from scraping to analysis.
+-   **`data_engineering_agent`**: Specialized in GCS-to-BigQuery data movement and schema management.
+-   **`analytics_agent`**: Focuses on natural language data exploration, SQL generation, and reporting.
 
 ## Project Structure
 
 ```
 social-scrap-agent/
-├── app/         # Core agent code
-│   ├── agent.py               # Main agent logic
-│   ├── agent_engine_app.py    # Agent Engine application logic
-│   └── app_utils/             # App utilities and helpers
-├── .cloudbuild/               # CI/CD pipeline configurations for Google Cloud Build
-├── deployment/                # Infrastructure and deployment scripts
-├── notebooks/                 # Jupyter notebooks for prototyping and evaluation
-├── tests/                     # Unit, integration, and load tests
-├── GEMINI.md                  # AI-assisted development guide
-├── Makefile                   # Development commands
-└── pyproject.toml             # Project dependencies
+├── app/                        # Core agent logic
+│   ├── agent.py               # Entry point (interactive mode)
+│   ├── agents/                # Specialized sub-agents
+│   │   ├── root_coordinator.py # Pipeline orchestrator
+│   │   ├── data_engineering.py # BQ loading logic
+│   │   └── analytics.py       # Data analysis logic
+│   └── tools/                 # Custom tools for agents
+│       ├── youtube_api.py     # YT Data API interface
+│       ├── scout_tool.py      # Scrape + GCS upload wrapper
+│       ├── bq_loader.py       # BigQuery ingestion tool
+│       ├── bq_analyzer.py     # SQL execution tool
+│       └── looker_tool.py     # Visualization URL provider
+├── .cloudbuild/               # CI/CD configs
+├── deployment/                # Infrastructure (Terraform)
+├── tests/                     # Unit & integration tests
+├── Makefile                   # Dev & deployment commands
+└── pyproject.toml             # Dependencies & metadata
 ```
-
-> 💡 **Tip:** Use [Gemini CLI](https://github.com/google-gemini/gemini-cli) for AI-assisted development - project context is pre-configured in `GEMINI.md`.
 
 ## Requirements
 
-Before you begin, ensure you have:
-- **uv**: Python package manager (used for all dependency management in this project) - [Install](https://docs.astral.sh/uv/getting-started/installation/) ([add packages](https://docs.astral.sh/uv/concepts/dependencies/) with `uv add <package>`)
-- **Google Cloud SDK**: For GCP services - [Install](https://cloud.google.com/sdk/docs/install)
-- **Terraform**: For infrastructure deployment - [Install](https://developer.hashicorp.com/terraform/downloads)
-- **make**: Build automation tool - [Install](https://www.gnu.org/software/make/) (pre-installed on most Unix-based systems)
+-   **uv**: Python package manager - [Install](https://docs.astral.sh/uv/getting-started/installation/)
+-   **Google Cloud SDK**: For GCP authentication - [Install](https://cloud.google.com/sdk/docs/install)
+-   **Terraform**: For infra deployment - [Install](https://developer.hashicorp.com/terraform/downloads)
 
+## Environment Variables
+
+Create a `.env` file in the `app/` directory (or set them in your environment):
+
+```bash
+YOUTUBE_API_KEY=your_api_key
+GCS_BUCKET_NAME=your_bucket_name
+BQ_DATASET_ID=social_dataset
+BQ_TABLE_NAME=daily_social_scrap
+```
 
 ## Quick Start
 
-Install required packages and launch the local development environment:
+1.  **Install dependencies**:
+    ```bash
+    make install
+    ```
 
-```bash
-make install && make playground
-```
-
-## Commands
-
-| Command              | Description                                                                                 |
-| -------------------- | ------------------------------------------------------------------------------------------- |
-| `make install`       | Install dependencies using uv                                                               |
-| `make playground`    | Launch local development environment                                                        |
-| `make lint`          | Run code quality checks                                                                     |
-| `make test`          | Run unit and integration tests                                                              |
-| `make deploy`        | Deploy agent to Agent Engine                                                                |
-| `make register-gemini-enterprise` | Register deployed agent to Gemini Enterprise                                  |
-| `make inspector`     | Launch A2A Protocol Inspector                                                               |
-| `make setup-dev-env` | Set up development environment resources using Terraform                                   |
-
-For full command options and usage, refer to the [Makefile](Makefile).
-
-## 🛠️ Project Management
-
-| Command | What It Does |
-|---------|--------------|
-| `uvx agent-starter-pack setup-cicd` | One-command setup of entire CI/CD pipeline + infrastructure |
-| `uvx agent-starter-pack upgrade` | Auto-upgrade to latest version while preserving customizations |
-| `uvx agent-starter-pack extract` | Extract minimal, shareable version of your agent |
-
----
-
-## Development
-
-Edit your agent logic in `app/agent.py` and test with `make playground` - it auto-reloads on save.
-Use notebooks in `notebooks/` for prototyping and Vertex AI Evaluation.
-See the [development guide](https://googlecloudplatform.github.io/agent-starter-pack/guide/development-guide) for the full workflow.
+2.  **Run locally (Interactive Mode)**:
+    ```bash
+    make playground
+    ```
 
 ## Deployment
 
-```bash
-gcloud config set project <your-project-id>
-make deploy
-```
-To set up your production infrastructure, run `uvx agent-starter-pack setup-cicd`.
-See the [deployment guide](https://googlecloudplatform.github.io/agent-starter-pack/guide/deployment) for details.
+1.  **Set GCP Project**:
+    ```bash
+    gcloud config set project <your-project-id>
+    ```
 
-## Observability
+2.  **Deploy to Vertex AI Agent Engine**:
+    ```bash
+    make deploy
+    ```
 
-Built-in telemetry exports to Cloud Trace, BigQuery, and Cloud Logging.
-See the [observability guide](https://googlecloudplatform.github.io/agent-starter-pack/guide/observability) for queries and dashboards.
+3.  **Register with Gemini Enterprise**:
+    ```bash
+    make register-gemini-enterprise
+    ```
 
-## A2A Inspector
-
-This agent supports the [A2A Protocol](https://a2a-protocol.org/). Use `make inspector` to test interoperability.
-See the [A2A Inspector docs](https://github.com/a2aproject/a2a-inspector) for details.
+---
+Agent generated with `googleCloudPlatform/agent-starter-pack` version `0.39.4`

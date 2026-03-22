@@ -94,6 +94,10 @@ deploy:
 # Alias for 'make deploy' for backward compatibility
 backend: deploy
 
+# Register the deployed agent with Gemini Enterprise
+register-gemini-enterprise:
+	uvx agent-starter-pack register-gemini-enterprise
+
 # ==============================================================================
 # Infrastructure Setup
 # ==============================================================================
