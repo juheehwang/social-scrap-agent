@@ -6,7 +6,7 @@
 # Install dependencies using uv package manager
 install:
 	@command -v uv >/dev/null 2>&1 || { echo "uv is not installed. Installing uv..."; curl -LsSf https://astral.sh/uv/0.8.13/install.sh | sh; source $HOME/.local/bin/env; }
-	uv sync
+	uv sync --dev
 
 # ==============================================================================
 # Playground Targets
@@ -24,61 +24,21 @@ playground:
 	uv run adk web . --port 8501 --reload_agents
 
 # ==============================================================================
-# A2A Protocol Inspector
-# ==============================================================================
-
-# Launch A2A Protocol Inspector to test your agent implementation
-inspector: setup-inspector-if-needed build-inspector-if-needed
-	@echo "==============================================================================="
-	@echo "| 🔍 A2A Protocol Inspector                                                  |"
-	@echo "==============================================================================="
-	@echo "| 🌐 Inspector UI: http://localhost:5001                                     |"
-	@echo "|                                                                             |"
-	@echo "| 💡 Testing Remote Deployment:                                               |"
-	@echo "|    Use the Agent Card URL from 'make deploy' output                        |"
-	@echo "|                                                                             |"
-	@echo "|    🔐 Auth: Expand 'Authentication & Headers', select 'Bearer Token',       |"
-	@echo "|       and paste output of: gcloud auth print-access-token                  |"
-	@echo "|                                                                             |"
-	@echo "| ℹ️  Note: Local testing requires deploying to Agent Engine first.          |"
-	@echo "==============================================================================="
-	@echo ""
-	cd tools/a2a-inspector/backend && uv run app.py
-
-# Internal: Setup inspector if not already present (runs once)
-# TODO: Update to --branch v1.0.0 when a2a-inspector publishes releases
-setup-inspector-if-needed:
-	@if [ ! -d "tools/a2a-inspector" ]; then \
-		echo "" && \
-		echo "📦 First-time setup: Installing A2A Inspector..." && \
-		echo "" && \
-		mkdir -p tools && \
-		git clone --quiet https://github.com/a2aproject/a2a-inspector.git tools/a2a-inspector && \
-		(cd tools/a2a-inspector && git -c advice.detachedHead=false checkout --quiet 893e4062f6fbd85a8369228ce862ebbf4a025694) && \
-		echo "📥 Installing Python dependencies..." && \
-		(cd tools/a2a-inspector && uv sync --quiet) && \
-		echo "📥 Installing Node.js dependencies..." && \
-		(cd tools/a2a-inspector/frontend && npm install --silent) && \
-		echo "🔨 Building frontend..." && \
-		(cd tools/a2a-inspector/frontend && npm run build --silent) && \
-		echo "" && \
-		echo "✅ A2A Inspector setup complete!" && \
-		echo ""; \
-	fi
-
-# Internal: Build inspector frontend if needed
-build-inspector-if-needed:
-	@if [ -d "tools/a2a-inspector" ] && [ ! -f "tools/a2a-inspector/frontend/public/script.js" ]; then \
-		echo "🔨 Building inspector frontend..."; \
-		cd tools/a2a-inspector/frontend && npm run build; \
-	fi
-
-# ==============================================================================
 # Backend Deployment Targets
 # ==============================================================================
 
+# Variables for Gemini Enterprise Registration
+# Replace with your actual OAuth and Resource details
+CLIENT_ID ?= client_id
+CLIENT_SECRET ?= client_secret
+AGENT_ENGINE_RESOURCE_NAME ?= $(shell jq -r '.remote_agent_engine_id // empty' deployment_metadata.json 2>/dev/null)
+
+AUTH_ID_TO_USE := social_scrap_auth
+GEMINI_ENTERPRISE_REGION := global
+GEMINI_ENTERPRISE_APP_ID := gemini-enterprise-17741551_1774155140591
+DISPLAY_NAME := social-scrap-agent
+
 # Deploy the agent remotely
-# Usage: make deploy [AGENT_IDENTITY=true] [SECRETS="KEY=SECRET_ID,..."] - Set AGENT_IDENTITY=true to enable per-agent IAM identity (Preview)
 deploy:
 	(uv export --no-hashes --no-header --no-dev --no-emit-project --no-annotate > app/app_utils/.requirements.txt 2>/dev/null || \
 	uv export --no-hashes --no-header --no-dev --no-emit-project > app/app_utils/.requirements.txt) && \
@@ -88,15 +48,61 @@ deploy:
 		--entrypoint-module=app.agent_engine_app \
 		--entrypoint-object=agent_engine \
 		--requirements-file=app/app_utils/.requirements.txt \
+		--display-name=$(DISPLAY_NAME) \
 		$(if $(AGENT_IDENTITY),--agent-identity) \
 		$(if $(filter command line,$(origin SECRETS)),--set-secrets="$(SECRETS)")
 
 # Alias for 'make deploy' for backward compatibility
 backend: deploy
 
-# Register the deployed agent with Gemini Enterprise
+# Register the deployed agent with Gemini Enterprise (Vertex AI Search)
 register-gemini-enterprise:
-	uvx agent-starter-pack register-gemini-enterprise
+	$(eval PROJECT_ID := $(shell gcloud config get-value project))
+	$(eval PROJECT_NUMBER := $(shell gcloud projects describe $(PROJECT_ID) --format='value(projectNumber)'))
+	$(eval ACCESS_TOKEN := $(shell gcloud auth print-access-token))
+
+	@if [ -z "$(AGENT_ENGINE_RESOURCE_NAME)" ]; then \
+		echo "❌ Error: AGENT_ENGINE_RESOURCE_NAME is not set. Please deploy the agent first (make deploy)"; \
+		exit 1; \
+	fi
+
+	@echo "🔍 Checking for existing Agent ID..."; \
+	AGENT_ID=$$(curl -s -H "Authorization: Bearer $(ACCESS_TOKEN)" -H "Content-Type: application/json" -H "X-Goog-User-Project: $(PROJECT_ID)" "https://${GEMINI_ENTERPRISE_REGION}-discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${GEMINI_ENTERPRISE_REGION}/collections/default_collection/engines/${GEMINI_ENTERPRISE_APP_ID}/assistants/default_assistant/agents" | jq -r '.agents[] | select(.displayName == "$(DISPLAY_NAME)") | .name | split("/") | last'); \
+    echo "Extracted Agent ID: $$AGENT_ID"; \
+	if [ -n "$$AGENT_ID" ] && [ "$$AGENT_ID" != "null" ]; then \
+		echo "Existing Agent ($$AGENT_ID) found. Deleting for re-registration..."; \
+		\
+		echo "[1/2] Deleting Agent..."; \
+		curl -X DELETE \
+			-H "Authorization: Bearer $(ACCESS_TOKEN)" \
+			"https://${GEMINI_ENTERPRISE_REGION}-discoveryengine.googleapis.com/v1alpha/projects/$(PROJECT_ID)/locations/${GEMINI_ENTERPRISE_REGION}/collections/default_collection/engines/${GEMINI_ENTERPRISE_APP_ID}/assistants/default_assistant/agents/$$AGENT_ID"; \
+		\
+		echo "\n[2/2] Deleting Authorization..."; \
+		curl -X DELETE \
+			-H "Authorization: Bearer $(ACCESS_TOKEN)" \
+			-H "X-Goog-User-Project: $(PROJECT_ID)" \
+			"https://$(GEMINI_ENTERPRISE_REGION)-discoveryengine.googleapis.com/v1alpha/projects/$(PROJECT_ID)/locations/$(GEMINI_ENTERPRISE_REGION)/authorizations/$(AUTH_ID_TO_USE)"; \
+		\
+		echo "\nCleanup complete."; \
+	else \
+		echo "No existing '$(DISPLAY_NAME)' Agent found. Proceeding with registration."; \
+	fi
+
+	@echo "1️⃣  Registering Authorization..."; \
+	curl -X POST \
+		-H "Authorization: Bearer $(ACCESS_TOKEN)" \
+		-H "Content-Type: application/json" \
+		-H "X-Goog-User-Project: $(PROJECT_ID)" \
+		"https://$(GEMINI_ENTERPRISE_REGION)-discoveryengine.googleapis.com/v1alpha/projects/$(PROJECT_ID)/locations/$(GEMINI_ENTERPRISE_REGION)/authorizations?authorizationId=$(AUTH_ID_TO_USE)" \
+		-d '{"name": "projects/$(PROJECT_NUMBER)/locations/$(GEMINI_ENTERPRISE_REGION)/authorizations/$(AUTH_ID_TO_USE)", "serverSideOauth2": {"clientId": "$(CLIENT_ID)", "clientSecret": "$(CLIENT_SECRET)", "authorizationUri": "https://accounts.google.com/o/oauth2/v2/auth?client_id=$(CLIENT_ID)&redirect_uri=https%3A%2F%2Fvertexaisearch.cloud.google.com%2Fstatic%2Foauth%2Foauth.html&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform&include_granted_scopes=true&response_type=code&access_type=offline&prompt=consent", "tokenUri": "https://oauth2.googleapis.com/token"}}'
+
+	@echo "\n2️⃣  Registering Agent..."; \
+	curl -X POST \
+		-H "Authorization: Bearer $(ACCESS_TOKEN)" \
+		-H "Content-Type: application/json" \
+		-H "X-Goog-User-Project: $(PROJECT_ID)" \
+		"https://$(GEMINI_ENTERPRISE_REGION)-discoveryengine.googleapis.com/v1alpha/projects/$(PROJECT_ID)/locations/$(GEMINI_ENTERPRISE_REGION)/collections/default_collection/engines/$(GEMINI_ENTERPRISE_APP_ID)/assistants/default_assistant/agents" \
+		-d '{"displayName": "$(DISPLAY_NAME)", "description": "Social Scrap Agent with ADK", "adk_agent_definition": { "provisioned_reasoning_engine": { "reasoning_engine": "$(AGENT_ENGINE_RESOURCE_NAME)" } }, "authorization_config": {"tool_authorizations": ["projects/$(PROJECT_NUMBER)/locations/$(GEMINI_ENTERPRISE_REGION)/authorizations/$(AUTH_ID_TO_USE)"]}}'
 
 # ==============================================================================
 # Infrastructure Setup
@@ -116,34 +122,7 @@ test:
 	uv sync --dev
 	uv run pytest tests/unit && uv run pytest tests/integration
 
-# ==============================================================================
-# Agent Evaluation
-# ==============================================================================
-
-# Run agent evaluation using ADK eval
-# Usage: make eval [EVALSET=tests/eval/evalsets/basic.evalset.json] [EVAL_CONFIG=tests/eval/eval_config.json]
-eval:
-	@echo "==============================================================================="
-	@echo "| Running Agent Evaluation                                                    |"
-	@echo "==============================================================================="
-	uv sync --dev --extra eval
-	uv run adk eval ./app $${EVALSET:-tests/eval/evalsets/basic.evalset.json} \
-		$(if $(EVAL_CONFIG),--config_file_path=$(EVAL_CONFIG),$(if $(wildcard tests/eval/eval_config.json),--config_file_path=tests/eval/eval_config.json,))
-
-# Run evaluation with all evalsets
-eval-all:
-	@echo "==============================================================================="
-	@echo "| Running All Evalsets                                                        |"
-	@echo "==============================================================================="
-	@for evalset in tests/eval/evalsets/*.evalset.json; do \
-		echo ""; \
-		echo "▶ Running: $$evalset"; \
-		$(MAKE) eval EVALSET=$$evalset || exit 1; \
-	done
-	@echo ""
-	@echo "✅ All evalsets completed"
-
-# Run code quality checks (codespell, ruff, ty)
+# Run code quality checks (codespell, ruff, mypy)
 lint:
 	uv sync --dev --extra lint
 	uv run codespell

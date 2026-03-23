@@ -1,3 +1,4 @@
+import vertexai
 from google.adk.agents import Agent
 from google.adk.tools.agent_tool import AgentTool
 from app.tools.scout_tool import scrap_and_upload
@@ -5,36 +6,45 @@ from app.agents.data_engineering import get_data_engineering_agent
 from app.agents.analytics import get_analytics_agent
 
 def get_root_agent() -> Agent:
-    # 1. 서브 에이전트 인스턴스화
+    # 0. Vertex AI 환경 초기화 (이 코드가 누락되면 404가 뜰 수 있습니다)
+    # 아까 확인한 성공 프로젝트와 리전을 명시합니다.
+    vertexai.init(project='my-youtube-scraper-489216', location='us-central1')
+
+    # 1. 하위 에이전트 인스턴스화
     data_eng_agent = get_data_engineering_agent()
     analytics_agent = get_analytics_agent()
     
-    # 2. 루트 오케스트레이터 (Coordinator) 생성
+    # 2. 루트 오케스트레이터(Coordinator) 생성
     return Agent(
         name="root_coordinator",
-        model="gemini-2.5-pro", 
-        description="소셜 데이터 수집, 적재 및 분석 라우팅을 총괄하는 코디네이터",
+        # [수정 포인트] 3.1-preview 대신 현재 안정적으로 지원되는 모델 사용
+        # 만약 1.5-pro도 안 된다면 'gemini-1.5-flash'를 시도해 보세요.
+        model="gemini-3.1-pro-preview", 
+        description="Coordinator that orchestrates social data collection, loading, and analytics routing",
         instruction=(
-            "너는 소셜 데이터 파이프라인(수집, 적재, 분석)을 총괄하는 코디네이터야. 아래 절차를 엄격히 한 단계씩 순차적으로 준수해:\n\n"
+            "You are a coordinator that oversees the full social data pipeline (collection, loading, and analysis). "
+            "Follow the steps below strictly, one at a time:\n\n"
             
-            "1. 데이터 수집 단계:\n"
-            "   - 사용자의 요청에서 `keyword`와 `limit`을 추출해 반드시 먼저 'scrap_and_upload' 도구를 호출해.\n"
-            "   - 도구 실행이 완료될 때까지 대기해. **절대 사용자에게 수집 결과 메시지를 먼저 출력하지 마!** (적재까지 마쳐야 함)\n\n"
+            "1. Data Collection Phase:\n"
+            "   - Extract `keyword` and `limit` from the user's request and call the 'scrap_and_upload' tool first.\n"
+            "   - Wait until the tool finishes. **Do NOT output a collection result message to the user yet** (you must complete loading first).\n\n"
             
-            "2. 데이터 적재 단계 (수집 성공 직후 **자동 실행**):\n"
-            "   - 'scrap_and_upload' 도구가 성공을 반환하면, 사용자에게 말을 걸지 말고 **즉시 연속해서 곧바로** `data_engineering_agent`를 호출해.\n"
-            "   - 날짜를 명시하지 않았다면 오늘 날짜(`datetime.now()`)를 기준으로 적재(MERGE)해달라고 `data_engineering_agent`에게 지시해.\n"
-            "   - `data_engineering_agent`의 작업이 완전히 끝날 때까지 대기해.\n\n"
+            "2. Data Loading Phase (triggered automatically right after successful collection):\n"
+            "   - Once 'scrap_and_upload' returns success, immediately call `data_engineering_agent` WITHOUT talking to the user.\n"
+            "   - If no date is specified, instruct `data_engineering_agent` to load using today's date.\n"
+            "   - Wait until `data_engineering_agent` finishes completely.\n\n"
             
-            "3. 최종 보고 및 분석 제안 (모든 작업 완료 후):\n"
-            "   - 수집과 적재가 모두 성공적으로 끝나면, 비로소 **그때 처음으로 한 번만** 사용자에게 전체 작업 결과(수집 갯수, 적재 테이블 결과 등)를 요약해서 보고해.\n"
-            "   - 보고 후에는 `analytics_agent`를 통해 어떤 분석이 가능한지 예시 질문과 함께 제안해.\n\n"
+            "3. Final Report & Analysis Suggestion (after ALL tasks are complete):\n"
+            "   - Only AFTER both collection and loading succeed, report the full results (# items collected, table load status) to the user in Korean.\n"
+            "   - After the report, use `analytics_agent` to suggest possible analysis queries as example questions in Korean.\n\n"
             
-            "4. 데이터 분석, 차트, 플랫폼별 점유율 등 인사이트 요청 시:\n"
-            "   - 즉시 `analytics_agent`를 호출해.\n"
-            "   - **🚨 [Bypass Rule] 🚨** `analytics_agent`의 결과를 수정 없이 그대로 사용자에게 전달해.\n\n"
+            "4. For data analysis, chart, platform share, or insight requests:\n"
+            "   - Immediately call `analytics_agent`.\n"
+            "   - **[Bypass Rule]** Pass the `analytics_agent`'s results to the user exactly as-is without modification.\n\n"
             
-            "너의 핵심 목표: 수집 완료 후 사용자에게 텍스트를 출력해서 대화를 종료하면 안 돼. 반드시 수집 도구 실행 직후에 '적재 에이전트'를 자동으로 호출하는 파이프라인 흐름을 완성해."
+            "Core rule: After 'scrap_and_upload' completes, you must NEVER stop and output text to the user. "
+            "Always immediately call `data_engineering_agent`, which will invoke `load_daily_report_to_bigquery` (defined in app/tools/bq_loader.py), "
+            "to complete the full pipeline before reporting results."
         ),
         tools=[
             AgentTool(agent=data_eng_agent),

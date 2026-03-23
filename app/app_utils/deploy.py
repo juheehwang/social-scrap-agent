@@ -27,7 +27,18 @@ import vertexai
 from google.cloud import resourcemanager_v3
 from google.iam.v1 import iam_policy_pb2, policy_pb2
 from vertexai._genai import _agent_engines_utils
-from vertexai._genai.types import AgentEngine, AgentEngineConfig, IdentityType
+from vertexai._genai.types import (
+    AgentEngine,
+    AgentEngineConfig,
+    IdentityType,
+    ReasoningEngineContextSpec,
+    ReasoningEngineContextSpecMemoryBankConfig,
+    ReasoningEngineContextSpecMemoryBankConfigGenerationConfig,
+    ReasoningEngineContextSpecMemoryBankConfigSimilaritySearchConfig,
+    MemoryBankCustomizationConfig,
+    MemoryBankCustomizationConfigMemoryTopic,
+    ManagedTopicEnum,
+)
 
 # Suppress google-cloud-storage version compatibility warning
 warnings.filterwarnings(
@@ -268,6 +279,11 @@ def setup_agent_identity(client: Any, project: str, display_name: str) -> Any:
     default=False,
     help="Enable agent identity for per-agent IAM access control (Preview feature)",
 )
+@click.option(
+    "--model-location",
+    default="global",
+    help="Gemini model location for the agent engine (ADK and Memory Bank, defaults to global)",
+)
 def deploy_agent_engine_app(
     project: str | None,
     location: str,
@@ -288,6 +304,7 @@ def deploy_agent_engine_app(
     container_concurrency: int,
     num_workers: int,
     agent_identity: bool,
+    model_location: str,
 ) -> AgentEngine:
     """Deploy the agent engine app to Vertex AI."""
 
@@ -386,6 +403,26 @@ def deploy_agent_engine_app(
         resource_limits={"cpu": cpu, "memory": memory},
         container_concurrency=container_concurrency,
         identity_type=IdentityType.AGENT_IDENTITY if agent_identity else None,
+        context_spec=ReasoningEngineContextSpec(
+           memory_bank_config=ReasoningEngineContextSpecMemoryBankConfig(
+                similarity_search_config=ReasoningEngineContextSpecMemoryBankConfigSimilaritySearchConfig(
+                    embedding_model=f"projects/{project}/locations/{model_location}/publishers/google/models/text-multilingual-embedding-002",
+                ),
+                generation_config=ReasoningEngineContextSpecMemoryBankConfigGenerationConfig(
+                    model=f"projects/{project}/locations/{model_location}/publishers/google/models/gemini-3.1-flash-lite-preview",
+                ),
+                customization_configs=[
+                   MemoryBankCustomizationConfig(
+                    memory_topics=[
+                        MemoryBankCustomizationConfigMemoryTopic(managed_memory_topic={"managed_topic_enum": ManagedTopicEnum.USER_PERSONAL_INFO}),
+                        MemoryBankCustomizationConfigMemoryTopic(managed_memory_topic={"managed_topic_enum": ManagedTopicEnum.USER_PREFERENCES}),
+                        MemoryBankCustomizationConfigMemoryTopic(managed_memory_topic={"managed_topic_enum": ManagedTopicEnum.KEY_CONVERSATION_DETAILS}),
+                        MemoryBankCustomizationConfigMemoryTopic(managed_memory_topic={"managed_topic_enum": ManagedTopicEnum.EXPLICIT_INSTRUCTIONS}),
+                    ],
+                   )
+                ],
+           )
+        ),
     )
 
     # Check if an agent with this name already exists
