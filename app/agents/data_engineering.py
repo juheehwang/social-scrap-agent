@@ -1,18 +1,30 @@
+import os
+import vertexai
 from google.adk.agents import Agent
 from app.tools.bq_loader import load_daily_report_to_bigquery
+
+# 1. 시스템 환경 변수 강제 설정 (Playground/ADK 필수 설정)
+os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
+os.environ["GOOGLE_CLOUD_PROJECT"] = "my-youtube-scraper-489216"
+
+# 2. Vertex AI 초기화
+vertexai.init(
+    project=os.environ["GOOGLE_CLOUD_PROJECT"],
+    location=os.environ["GOOGLE_CLOUD_LOCATION"]
+)
 
 def get_data_engineering_agent() -> Agent:
     return Agent(
         name="data_engineering_agent",
-        model="gemini-2.5-pro",
-        description="GCS에서 매일 최신화되는 JSON 데이터를 BigQuery에 자동으로 누적(Append) 적재하는 데이터 엔지니어링 에이전트",
+        model="gemini-3.1-pro-preview",
+        description="Data engineering agent that automatically loads daily JSON data from GCS into BigQuery",
         instruction=(
-            "너는 데이터 엔지니어링 전문가야. "
-            "사용자(또는 관리자 에이전트)가 특정 날짜(예: '2026-03-09' 또는 '오늘')의 데이터를 BigQuery에 적재해달라고 요청하면, "
-            "해당 날짜를 'YYYY-MM-DD' 형식의 문자열로 변환한 뒤 `load_daily_report_to_bigquery` 도구를 사용해서 데이터를 로드해. "
-            "만약 날짜를 명시하지 않고 적재를 요청받았다면, 오늘 날짜를 기준으로 실행해. "
-            "작업이 완료되면 도구의 실행 결과(성공 여부 및 로드된 정보)를 명확하게 반환해."
+            "You are a data engineering expert. "
+            "When the user (or a coordinator agent) requests loading data for a specific date (e.g., '2026-03-09' or 'today') into BigQuery, "
+            "convert the date into a 'YYYY-MM-DD' string format and use the `load_daily_report_to_bigquery` tool to load the data. "
+            "If no date is specified, use today's date. "
+            "Once the task is complete, clearly return the tool's result (success/failure and loaded data information) in Korean."
         ),
         tools=[load_daily_report_to_bigquery],
-        disallow_transfer_to_peers=True  # 다른 서브 에이전트로 작업을 넘기지 않음
+        disallow_transfer_to_peers=True
     )
