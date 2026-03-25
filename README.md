@@ -16,7 +16,7 @@ User Request (keyword)
         ↓
 [4] 📦  Load from GCS → BigQuery (MERGE)              ← bq_loader.py
         ↓
-[5] 📊  Natural Language Analytics (SQL generation)   ← analytics_agent
+[5] 📊  Conversational Analytics (CA API + Charts)    ← analytics_agent
 ```
 
 ## Multi-Agent Architecture
@@ -27,7 +27,7 @@ root_coordinator (gemini-2.5-pro)
 ├── data_engineering_agent           ← Step 4
 │   └── load_daily_report_to_bigquery (tool)
 └── analytics_agent                  ← Step 5
-    └── execute_bq_query (tool)
+    └── execute_conversational_analytics (tool)
 ```
 
 ## BigQuery Schema
@@ -69,7 +69,7 @@ social-scrap-agent/
 │   │   ├── gemini_analyzer.py     # Gemini comment sentiment analysis
 │   │   ├── gcs_uploader.py        # GCS upload helper
 │   │   ├── bq_loader.py           # BigQuery MERGE loading
-│   │   ├── bq_analyzer.py         # SQL execution + Markdown table output
+│   │   ├── ca_analyzer.py         # Conversational Analytics API (Charts & Markdown)
 │   │   ├── youtube_api.py         # YouTube Data API v3 client
 │   │   └── models.py              # Data models
 │   └── app_utils/
@@ -112,6 +112,14 @@ make install
 
 # 2. Run interactive playground (local)
 make playground
+```
+
+** Cloud shell setting for Conversational Analytics API **
+
+```bash
+gcloud services enable geminidataanalytics.googleapis.com
+gcloud services enable cloudaicompanion.googleapis.com
+gcloud services enable bigquery.googleapis.com
 ```
 
 **Example prompts:**
