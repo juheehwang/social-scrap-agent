@@ -12,12 +12,15 @@ async def analyze_comment(comment: str, model) -> dict:
         return {"comment": comment, "reaction": "중립", "comment_keyword": ""}
 
     prompt = (
-        "Read the following social media comment and analyze it.\n"
-        "Respond ONLY in the following JSON format. Do NOT use markdown symbols (```).\n"
-        '{\"reaction\": \"긍정 or 부정 or 중립\", \"comment_keyword\": \"keyword1, keyword2\"}\n\n'
-        "Rule 1: 'reaction' must be exactly one of: '긍정' (positive), '부정' (negative), or '중립' (neutral). Write it in Korean.\n"
-        "Rule 2: 'comment_keyword' must contain 1 to 3 core keywords extracted from the comment, separated by commas. Write keywords in Korean.\n"
-        "Rule 3: Do not add any explanation or extra text outside the JSON.\n\n"
+        "You are an expert social media analyst who understands subtle nuances, sarcasm, irony, and metaphors in various languages.\n"
+        "Read the following social media comment and perform a deep analysis of the user's intent.\n"
+        "Respond ONLY in the JSON format below. Do NOT use markdown formatting like ```json ... ```.\n"
+        '{"reaction": "positive or negative or neutral", "comment_keyword": "keyword1, keyword2"}\n\n'
+        "Guidelines:\n"
+        "- 'reaction': Analyze the sentiment carefully. Be mindful of sarcasm and metaphors.\n"
+        "  Must be exactly one of: 'positive', 'negative', or 'neutral'.\n"
+        "- 'comment_keyword': Extract 1 to 3 core keywords that represent the main topic or emotion.\n"
+        "- DO NOT include any introductory text or explanation outside the JSON.\n\n"
         f"Comment: {comment}"
     )
 
@@ -42,10 +45,16 @@ async def analyze_comment(comment: str, model) -> dict:
             return {"comment": comment, "reaction": "중립", "comment_keyword": ""}
         
         result_json = json.loads(json_match.group())
-        reaction = result_json.get("reaction", "중립")
-        # reaction 값 유효성 검증
-        if reaction not in ("긍정", "부정", "중립"):
-            reaction = "중립"
+        raw_reaction = result_json.get("reaction", "neutral").lower()
+
+        # English to Korean mapping for DB consistency
+        reaction_map = {
+            "positive": "긍정",
+            "negative": "부정",
+            "neutral": "중립"
+        }
+        reaction = reaction_map.get(raw_reaction, "중립")
+
         return {
             "comment": comment,
             "reaction": reaction,
@@ -70,8 +79,9 @@ async def analyze_comments_with_gemini(comments_list: list[str]) -> list[dict]:
     import vertexai
     from google import genai
 
-    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT", "my-youtube-scraper-489216")
-    # Gemini 2.5 Flash는 global 엔드포인트에서만 접근 가능
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT")
+    if not project_id:
+        raise ValueError("GOOGLE_CLOUD_PROJECT or GCP_PROJECT is missing. Run 'make setup-env' first.")
     vertexai.init(project=project_id, location="global")
 
     client = genai.Client(vertexai=True)
@@ -82,3 +92,45 @@ async def analyze_comments_with_gemini(comments_list: list[str]) -> list[dict]:
 
     print(f"📝 [Gemini Analyzer] 댓글 {len(results)}개 분석 완료")
     return list(results)
+
+async def analyze_video_content(video_url: str) -> str:
+    """
+    영상 URL을 입력받아 Gemini AI Studio API를 통해 영상 구조와 대사를 상세 분석합니다.
+    """
+    import os
+    import asyncio
+    from google import genai
+    from google.genai import types
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "⚠️ 영상 분석 에러: .env 파일에 GEMINI_API_KEY가 없습니다."
+
+    client = genai.Client(api_key=api_key, vertexai=False)
+
+    prompt = """
+    Analyze the audio of the provided video from start to finish and extract it as text.
+    Do not include any visual information (screen descriptions, subtitles, etc.) or metadata such as the video title. Focus strictly on the 'timestamp' and 'audio/speech' content.
+    
+    Please follow these guidelines strictly:
+    
+    1. Timestamp Analysis: Divide the video chronologically and explicitly label the timestamps (e.g., 01:15 - 02:30) for each segment.
+    2. Audio and Speech: For each timestamp segment, document the speaker's core message, product review details, and important dialogue in detail, as if writing a transcript.
+    
+    [IMPORTANT] Absolutely DO NOT include any introductory phrasing, greetings, or meta commentary. Output ONLY the analytical result data directly.
+    """
+
+    try:
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model='gemini-3.1-pro-preview',
+            contents=[
+                types.Part.from_uri(file_uri=video_url, mime_type='video/mp4'),
+                prompt,
+            ]
+        )
+        return response.text
+    except Exception as e:
+        print(f"⚠️ [Gemini Analyzer] 영상 분석 오류: {e}")
+        return None
+

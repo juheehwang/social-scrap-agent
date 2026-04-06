@@ -11,6 +11,7 @@ class SocialMediaPost:
     views: Optional[int] # 조회수 (조회수 숨김 처리 등으로 수집 불가능할 때를 대비해 Optional 적용)
     published_at: Optional[str] = None # 게시일자 (ISO 8601 포맷 등)
     comments: List[str] = field(default_factory=list) # 댓글 리스트
+    content: Optional[str] = None # 영상 내용 분석
     
     def to_dict(self):
         """저장 및 분석을 위해 JSON/Dict 형태로 반환"""
@@ -22,5 +23,6 @@ class SocialMediaPost:
             "published_at": self.published_at,
             "views": self.views,
             "comments": self.comments,
-            "comment_count": len(self.comments)
+            "comment_count": len(self.comments),
+            "content": self.content
         }

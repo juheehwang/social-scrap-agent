@@ -5,8 +5,32 @@
 
 # Install dependencies using uv package manager
 install:
-	@command -v uv >/dev/null 2>&1 || { echo "uv is not installed. Installing uv..."; curl -LsSf https://astral.sh/uv/0.8.13/install.sh | sh; source $HOME/.local/bin/env; }
+	@command -v uv >/dev/null 2>&1 || { echo "uv is not installed. Installing uv..."; curl -LsSf https://astral.sh/uv/0.8.13/install.sh | sh; source $$HOME/.local/bin/env; }
+	@export UV_INDEX_STAGING_USERNAME=oauth2accesstoken; \
+	export UV_INDEX_STAGING_PASSWORD=$$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token); \
 	uv sync --dev
+
+# Setup .env file with current gcloud project
+setup-env:
+	@PROJECT_ID=$$(gcloud config get-value project 2>/dev/null); \
+	if [ -z "$$PROJECT_ID" ] || [ "$$PROJECT_ID" = "(unset)" ]; then \
+		echo "❌ Error: No gcloud project set. Please run 'gcloud config set project <your-project-id>' first."; \
+		exit 1; \
+	fi; \
+	echo "✅ Detected gcloud project: $$PROJECT_ID"; \
+	if [ -f app/.env ]; then \
+		if grep -q "^GOOGLE_CLOUD_PROJECT=" app/.env; then \
+			sed -i "s/^GOOGLE_CLOUD_PROJECT=.*/GOOGLE_CLOUD_PROJECT=$$PROJECT_ID/" app/.env; \
+			echo "✅ Updated GOOGLE_CLOUD_PROJECT in app/.env"; \
+		else \
+			echo "GOOGLE_CLOUD_PROJECT=$$PROJECT_ID" >> app/.env; \
+			echo "✅ Appended GOOGLE_CLOUD_PROJECT to app/.env"; \
+		fi; \
+	else \
+		echo "GOOGLE_CLOUD_PROJECT=$$PROJECT_ID" > app/.env; \
+		echo "✅ Created app/.env with GOOGLE_CLOUD_PROJECT"; \
+	fi
+
 
 # ==============================================================================
 # Playground Targets
@@ -21,6 +45,8 @@ playground:
 	@echo "|                                                                             |"
 	@echo "| 🔍 IMPORTANT: Select the 'app' folder to interact with your agent.          |"
 	@echo "==============================================================================="
+	@export UV_INDEX_STAGING_USERNAME=oauth2accesstoken; \
+	export UV_INDEX_STAGING_PASSWORD=$$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token); \
 	uv run adk web . --port 8501 --reload_agents
 
 # ==============================================================================
@@ -33,9 +59,9 @@ CLIENT_ID ?= client_id
 CLIENT_SECRET ?= client_secret
 AGENT_ENGINE_RESOURCE_NAME ?= $(shell jq -r '.remote_agent_engine_id // empty' deployment_metadata.json 2>/dev/null)
 
-AUTH_ID_TO_USE := social_scrap_auth
+AUTH_ID_TO_USE := social_auth
 GEMINI_ENTERPRISE_REGION := global
-GEMINI_ENTERPRISE_APP_ID := gemini-enterprise-17741551_1774155140591
+GEMINI_ENTERPRISE_APP_ID := gemini-enterprise-17742709_1774270925095
 DISPLAY_NAME := social-scrap-agent
 
 # Deploy the agent remotely
@@ -119,13 +145,17 @@ setup-dev-env:
 
 # Run unit and integration tests
 test:
-	uv sync --dev
+	@export UV_INDEX_STAGING_USERNAME=oauth2accesstoken; \
+	export UV_INDEX_STAGING_PASSWORD=$$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token); \
+	uv sync --dev; \
 	uv run pytest tests/unit && uv run pytest tests/integration
 
 # Run code quality checks (codespell, ruff, mypy)
 lint:
-	uv sync --dev --extra lint
-	uv run codespell
-	uv run ruff check . --diff
-	uv run ruff format . --check --diff
+	@export UV_INDEX_STAGING_USERNAME=oauth2accesstoken; \
+	export UV_INDEX_STAGING_PASSWORD=$$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token); \
+	uv sync --dev --extra lint; \
+	uv run codespell; \
+	uv run ruff check . --diff; \
+	uv run ruff format . --check --diff; \
 	uv run ty check .

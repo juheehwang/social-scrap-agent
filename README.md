@@ -9,21 +9,21 @@ User Request (keyword)
         ↓
 [1] 🕵️  Scrape YouTube (title, views, comments)        ← scout_tool.py
         ↓
-[2] 🤖  Gemini AI analyzes each comment               ← gemini_analyzer.py
-        (reaction: 긍정/부정/중립, comment_keyword)
+[2] 🤖  Gemini AI analyzes content & comments           ← gemini_analyzer.py
+        (Multilingual Sentiment, Sarcasm/Metaphor Detection)
         ↓
-[3] ☁️  Upload enriched NDJSON to GCS                 ← gcs_uploader.py
+[3] ☁️  Upload enriched NDJSON to GCS (UUID-named)       ← gcs_uploader.py
         ↓
-[4] 📦  Load from GCS → BigQuery (MERGE)              ← bq_loader.py
+[4] 📦  Load from GCS → BigQuery (MERGE)                ← bq_loader.py
         ↓
-[5] 📊  Conversational Analytics (CA API + Charts)    ← analytics_agent
+[5] 📊  Conversational Analytics (CA API + Charts)      ← analytics_agent
 ```
 
 ## Multi-Agent Architecture
 
 ```
-root_coordinator (gemini-2.5-pro)
-├── scrap_and_upload (tool)          ← Step 1~3
+root_coordinator (gemini-3.1-pro-preview)
+├── scrap_and_upload (tool)          ← Step 1~3 (Parallel processing)
 ├── data_engineering_agent           ← Step 4
 │   └── load_daily_report_to_bigquery (tool)
 └── analytics_agent                  ← Step 5
@@ -44,6 +44,7 @@ root_coordinator (gemini-2.5-pro)
 | published_at | TIMESTAMP | 게시일 |
 | views | INT64 | 조회수 |
 | comment_count | INT64 | 댓글 수 |
+| content | STRING | AI 영상 분석/요약 결과 |
 
 ### `social_comment` — Gemini 분석 댓글
 | Column | Type | Description |
@@ -63,10 +64,12 @@ social-scrap-agent/
 │   ├── agents/
 │   │   ├── root_coordinator.py    # Pipeline orchestrator
 │   │   ├── data_engineering.py    # BQ loading agent
-│   │   └── analytics.py          # NL-to-SQL analytics agent
+│   │   ├── analytics.py           # NL-to-SQL analytics agent
+│   │   └── md_loader.py           # Load markdown prompt templates
 │   ├── tools/
 │   │   ├── scout_tool.py          # Scrape + Gemini analysis + GCS upload
 │   │   ├── gemini_analyzer.py     # Gemini comment sentiment analysis
+│   │   ├── sql_analyzer.py        # BigQuery SQL analyzer with validation
 │   │   ├── gcs_uploader.py        # GCS upload helper
 │   │   ├── bq_loader.py           # BigQuery MERGE loading
 │   │   ├── ca_analyzer.py         # Conversational Analytics API (Charts & Markdown)
@@ -87,7 +90,9 @@ social-scrap-agent/
 
 ## Environment Variables
 
-Create `app/.env`:
+The easiest way to set up your environment is running `make setup-env`, which automatically detects your active `gcloud` project and creates/updates `app/.env`.
+
+Alternatively, manually create `app/.env`:
 
 ```bash
 # YouTube Data API Key
@@ -107,36 +112,37 @@ BQ_TABLE_NAME=daily_social_scrap
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
+# 1. Authenticate with Google Cloud (ADC)
+gcloud auth application-default login
+
+# 2. Setup environment variables
+make setup-env
+
+# 3. Install dependencies
 make install
 
-# 2. Run interactive playground (local)
+# 4. Run interactive playground (local)
 make playground
 ```
 
-** Cloud shell setting for Conversational Analytics API **
-
-```bash
-gcloud services enable geminidataanalytics.googleapis.com
-gcloud services enable cloudaicompanion.googleapis.com
-gcloud services enable bigquery.googleapis.com
-```
-
 **Example prompts:**
-- `"봄신상" 키워드로 10개 수집해줘` → scrape + Gemini analysis + BQ load
-- `키워드별 수집된 게시물 수 보여줘` → NL-to-SQL analytics
-- `긍정 반응이 많은 댓글 키워드 뽑아줘` → sentiment analysis query
+- `"봄신상" 키워드로 10개 수집해줘` → scrape + Gemini analysis + BQ load (Datasets and tables are created automatically if missing)
+- `키워드별 수집된 게시물 수 보여줘` → CA API Data Table + Auto Chart
+- `긍정 반응이 많은 댓글 키워드 막대 차트로 그려줘` → CA API Sentiment analysis + QuickChart Bar Chart
 
 ## Deployment
 
 ```bash
-# 1. Set GCP project
+# 1. Authenticate with Google Cloud (ADC)
+gcloud auth application-default login
+
+# 2. Set GCP project
 gcloud config set project <your-project-id>
 
-# 2. Deploy to Vertex AI Agent Engine
+# 3. Deploy to Vertex AI Agent Engine
 make deploy
 
-# 3. Register with Gemini Enterprise (App ID is auto-detected)
+# 4. Register with Gemini Enterprise (App ID is auto-detected)
 make register-gemini-enterprise
 ```
 
@@ -147,11 +153,26 @@ make register-gemini-enterprise
 | Command | Description |
 |---|---|
 | `make install` | Install dependencies |
+| `make setup-env` | Setup `app/.env` with current `gcloud` project |
 | `make playground` | Run interactive local playground |
 | `make deploy` | Deploy to Vertex AI Agent Engine |
 | `make register-gemini-enterprise` | Register agent with Gemini Enterprise (auto-detects App ID) |
 | `make lint` | Run code linting |
 | `make test` | Run tests |
 
+## Key Features
+
+- **Universal Video Analysis**: Support for summarizing video content (audio/speech) from YouTube and other video platforms using `gemini-3.1-pro-preview`.
+- **Multilingual Sentiment Analysis**: Advanced sentiment analysis detecting sarcasm and metaphors across various languages.
+- **Concurrent & Scalable**: UUID-based file naming and explicit GCS URI passing prevent race conditions during concurrent agent runs.
+- **Parallel Processing**: Uses `asyncio.gather` for high-throughput scraping and AI analysis.
+- **Automated Data Pipeline**: From raw social data to BigQuery tables and visual charts via natural language.
+
 ---
-Built with [agent-starter-pack](https://github.com/GoogleCloudPlatform/agent-starter-pack) · Powered by Google ADK & Gemini 2.5 Pro
+## Upgrade Feature 
+
+- **Multi-Platform Social Media Integration**: Extend the pipeline to support other platforms like Instagram, TikTok, and Twitter/X by implementing pluggable API adapters.
+- **Scalable Batch Sentiment Analysis with BigQuery ML (BQML)**: As data volume grows, shift from real-time API calls to BigQuery ML (using Vertex AI models within BQ) for high-performance, cost-effective batch sentiment analysis and keyword extraction.
+
+---
+Built with [agent-starter-pack](https://github.com/GoogleCloudPlatform/agent-starter-pack) · Powered by Google ADK & Gemini 3.1 Pro Preview
