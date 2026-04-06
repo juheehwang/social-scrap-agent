@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import datetime
 from google.cloud import storage
 from dotenv import load_dotenv
@@ -14,7 +15,8 @@ class GCSUploader:
 
     def upload_daily_report(self, local_file_path: str) -> str:
         """
-        로컬 파일을 오늘 날짜(YYYY-MM-DD) 폴더 구조로 GCS에 업로드합니다.
+        로컬 파일을 오늘 날짜(YYYY-MM-DD) 폴더 + UUID로 GCS에 업로드합니다.
+        동시에 여러 사용자가 업로드해도 UUID로 인해 파일이 덮어씌워지지 않습니다.
         
         :param local_file_path: 로컬에 저장된 파일 경로 (예: reports/raw_social_data.json)
         :return: 업로드된 대상 파일명(Blob name)
@@ -23,8 +25,8 @@ class GCSUploader:
             raise FileNotFoundError(f"로컬 파일을 찾을 수 없습니다: {local_file_path}")
             
         today_str = datetime.now().strftime('%Y-%m-%d')
-        file_name = os.path.basename(local_file_path)
-        destination_blob_name = f"reports/{today_str}"
+        unique_id = uuid.uuid4().hex[:8]  # 충돌 방지용 고유 ID
+        destination_blob_name = f"reports/{today_str}/{unique_id}.json"
         
         blob = self.bucket.blob(destination_blob_name)
         blob.upload_from_filename(local_file_path)

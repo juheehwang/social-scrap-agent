@@ -103,17 +103,20 @@ def generate_mermaid_from_vega(vega_config: Dict[str, Any], data_rows: List[Dict
         }
         import json
         json_str = json.dumps(chart_config)
-        encoded_url = "https://quickchart.io/chart?c=" + urllib.parse.quote(json_str)
+        # 500x250 ensures it stays compact and does not overpower the chat UI
+        encoded_url = "https://quickchart.io/chart?w=500&h=250&c=" + urllib.parse.quote(json_str)
         
         return f"![막대 차트]({encoded_url})"
 
 
 def get_or_create_ca_agent() -> str:
     """Gets or creates the Gemini Data Analytics Agent, returns agent path."""
-    project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "my-youtube-scraper-489216")
-    dataset_id = os.getenv("BQ_DATASET_ID", "social_dataset")
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT")
+    if not project_id:
+        raise ValueError("GOOGLE_CLOUD_PROJECT or GCP_PROJECT is missing. Run 'make setup-env' first.")
+    dataset_id = os.getenv("BQ_DATASET_ID") or "social_dataset"
     location = "global"
-    data_agent_id = "social_scrap_analytics_agent_v1"
+    data_agent_id = "social_scrap_analytics_agent_v8"
     
     agent_path = f"projects/{project_id}/locations/{location}/dataAgents/{data_agent_id}"
     
@@ -124,36 +127,52 @@ def get_or_create_ca_agent() -> str:
         return agent_path
     except Exception:
         # Create it if not found
-        system_instruction = '''
-system_instruction:
-  - You are an expert data analyst analyzing social media scraped data and comments.
-  - Users will ask questions about social posts, platforms, views, comments, and keywords.
-  - Always use the `scrap_id` column to join the parent and child tables.
-tables:
-  daily_social_scrap:
-    description: "Parent table containing the original social media posts/videos information."
-    fields:
-      scrap_id: "Unique identifier for the post."
-      keyword: "The search keyword used to scrape the post."
-      url: "URL of the post."
-      title: "Title or content text of the post."
-      platform: "Social media platform (e.g., youtube, naver_blog)."
-      owner: "The author or channel name."
-      view_count: "Number of views."
-      comment_count: "Total comments on the post."
-  social_comment:
-    description: "Child table containing analyzed comments for the posts."
-    fields:
-      scrap_id: "Foreign key linking back to the daily_social_scrap table."
-      comment: "The raw text of the comment."
-      reaction: "Sentiment or reaction category (e.g., Positive, Negative, Neutral)."
-      comment_keyword: "Extracted keywords from this specific comment."
-join_instructions:
-  goal: "Join comments to their source posts or analyze sentiment by platform."
-  method: "INNER JOIN the two tables on their common scrap_id."
-  keys:
-    - "scrap_id"
-'''
+        system_instruction = """
+You are an expert social media data analyst. Users will ask questions about social posts, platforms, views, comments, and keywords.
+
+Always use the `scrap_id` column to join the parent and child tables.
+
+Table 1: `daily_social_scrap`
+Fields:
+- `scrap_id`: Unique identifier for the post.
+- `keyword`: The search keyword used to scrape the post.
+- `url`: URL of the post.
+- `title`: Title or content text of the post.
+- `platform`: Social media platform (e.g., youtube, naver_blog).
+- `owner`: The author or channel name.
+- `published_at`: Publication timestamp.
+- `views`: Number of views.
+- `comment_count`: Total comments on the post.
+- `content`: AI-generated video transcript/summary.
+
+
+Table 2: `social_comment`
+Fields:
+- `scrap_id`: Foreign key linking back to the daily_social_scrap table.
+- `comment`: The raw text of the comment.
+- `reaction`: Sentiment or reaction category. Must be one of exactly '긍정', '부정', or '중립' in Korean ONLY! Always group by this string if user asks for sentiment.
+- `comment_keyword`: Extracted keywords from this specific comment.
+
+Join Rule:
+- To join post metadata and comment details, always INNER JOIN the two tables on their common `scrap_id`.
+
+Few-shot Examples:
+
+Q: '명품화장품' 키워드로 수집된 영상들의 실제 댓글 총 개수는?
+A:
+SELECT COUNT(c.comment) AS total_comments
+FROM `daily_social_scrap` s
+JOIN `social_comment` c ON s.scrap_id = c.scrap_id
+WHERE s.keyword = '명품화장품' AND c.reaction = '긍정'
+
+Q: '메이크업' 영상들의 긍정 댓글 비율은?
+A:
+SELECT c.reaction, COUNT(*) as cnt
+FROM `daily_social_scrap` s
+JOIN `social_comment` c ON s.scrap_id = c.scrap_id
+WHERE s.keyword = '메이크업'
+GROUP BY c.reaction
+"""
         bq_parent = geminidataanalytics.BigQueryTableReference(
             project_id=project_id,
             dataset_id=dataset_id,
@@ -184,11 +203,18 @@ join_instructions:
         )
         
         # Create
-        data_agent_client.create_data_agent(request=geminidataanalytics.CreateDataAgentRequest(
-            parent=f"projects/{project_id}/locations/{location}",
-            data_agent_id=data_agent_id,
-            data_agent=data_agent,
-        ))
+        try:
+            data_agent_client.create_data_agent(request=geminidataanalytics.CreateDataAgentRequest(
+                parent=f"projects/{project_id}/locations/{location}",
+                data_agent_id=data_agent_id,
+                data_agent=data_agent,
+            ))
+        except Exception as create_e:
+            if "already exists" in str(create_e).lower() or "409" in str(create_e):
+                logging.info(f"Agent {data_agent_id} already exists (caught 409). Proceeding.")
+            else:
+                raise create_e
+                
         return agent_path
 
 def execute_conversational_analytics(query: str, session_id: str = "default_session") -> str:
@@ -202,7 +228,9 @@ def execute_conversational_analytics(query: str, session_id: str = "default_sess
     if not geminidataanalytics:
         return "❌ Error: google-cloud-geminidataanalytics package is not installed."
         
-    project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "my-youtube-scraper-489216")
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT")
+    if not project_id:
+        raise ValueError("GOOGLE_CLOUD_PROJECT or GCP_PROJECT is missing. Run 'make setup-env' first.")
     location = "global"
     
     try:
@@ -211,7 +239,7 @@ def execute_conversational_analytics(query: str, session_id: str = "default_sess
         return f"❌ Failed to initialize CA API Agent: {e}"
 
     # Setup Conversation
-    conversation_id = f"ca_api_{session_id}"
+    conversation_id = f"ca_api_v8_{session_id}"
     conversation_path = f"projects/{project_id}/locations/{location}/conversations/{conversation_id}"
     
     try:
@@ -223,7 +251,13 @@ def execute_conversational_analytics(query: str, session_id: str = "default_sess
             conversation_id=conversation_id,
             conversation=conversation,
         )
-        data_chat_client.create_conversation(request=request)
+        try:
+            data_chat_client.create_conversation(request=request)
+        except Exception as conv_e:
+            if "already exists" in str(conv_e).lower() or "409" in str(conv_e):
+                logging.info(f"Conversation {conversation_id} already exists (caught 409). Proceeding.")
+            else:
+                raise conv_e
 
     # Send Message
     messages = [
