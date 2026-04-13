@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
 def generate_markdown_table(rows: list) -> str:
     """수동으로 마크다운 테이블 포맷팅을 생성합니다 (tabulate 의존성 없이 실행)."""
     if not rows:
@@ -41,18 +40,21 @@ def generate_markdown_table(rows: list) -> str:
         
     return markdown
 
-
 def execute_direct_bigquery_sql(query: str) -> str:
     """
-    빅쿼리에 대한 표준 SQL 조회를 직접 수행하고, 데이터 표 및 차트를 자동 렌더링합니다. (403 권한 에러 우회)
-    이 버전은 COUNT 쿼리를 먼저 실행하여 데이터 정합성을 검증합니다.
+    빅쿼리에 대한 표준 SQL 조회를 직접 수행하고, 데이터 표 및 차트를 자동 렌더링합니다.
     """
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT")
     if not project_id:
         raise ValueError("GOOGLE_CLOUD_PROJECT or GCP_PROJECT is missing. Run 'make setup-env' first.")
-    dataset_id = os.environ.get("BQ_DATASET_ID", "social_dataset")
+    dataset_id = os.getenv("BQ_DATASET_ID", "social_dataset")
     
-    client = genai.Client(vertexai=True, project=project_id, location="us-central1")
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "❌ Error: .env 파일에 GEMINI_API_KEY가 없습니다."
+
+    # Vertex AI 404 오류 수정을 위해 GenAI API (vertexai=False) 사용
+    client = genai.Client(api_key=api_key, vertexai=False)
     bq_client = bigquery.Client(project=project_id)
 
     # 1. Count 쿼리 생성 프롬프트
@@ -183,4 +185,3 @@ Return ONLY the SQL query. No markdown, no triple backticks, no comments.
     output.append("\n- **실행된 SQL:**\n```sql\n" + sql_generated + "\n```")
         
     return "\n".join(output)
-

@@ -139,14 +139,19 @@ gcloud auth application-default login
 # 2. Set GCP project
 gcloud config set project <your-project-id>
 
-# 3. Deploy to Vertex AI Agent Engine
+# 3. Update OAuth Credentials and Engine info
+# Before registering, open the `Makefile` and update the OAuth credentials at the top of the file:
+#   CLIENT_ID ?= your_oauth_client_id.apps.googleusercontent.com
+#   CLIENT_SECRET ?= your_oauth_client_secret
+
+# 4. Deploy to Vertex AI Agent Engine
 make deploy
 
-# 4. Register with Gemini Enterprise (App ID is auto-detected)
+# 5. Register with Gemini Enterprise (App ID is auto-detected)
 make register-gemini-enterprise
 ```
 
-> **Note**: `make register-gemini-enterprise` automatically detects the first Gemini Enterprise App in your project — no hardcoding required.
+> **Note**: `make register-gemini-enterprise` automatically detects the first Gemini Enterprise App in your project. Ensure the `CLIENT_ID` and `CLIENT_SECRET` in your `Makefile` are properly set.
 
 ## Makefile Commands
 

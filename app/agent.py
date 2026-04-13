@@ -6,13 +6,18 @@ from datetime import datetime
 from pathlib import Path
 from google import adk
 from google.adk.apps import App
+from google.adk.models.google_llm import Gemini
+from google.genai import Client
 
-# 0. ADK App 인스턴스 생성 (Reasoning Engine 및 agent_engine_app에서 사용)
-def _get_app():
-    from .agents.root_coordinator import get_root_agent
-    return App(name="app", root_agent=get_root_agent())
+_vertex_client = None
 
-app = _get_app()
+def _get_vertex_client(self):
+    global _vertex_client
+    if _vertex_client is None:
+        _vertex_client = Client(vertexai=True)
+    return _vertex_client
+
+Gemini.api_client = property(_get_vertex_client)
 
 # 1. 환경 변수 로드
 def init_env():
@@ -26,10 +31,20 @@ def init_env():
     env_path = current_dir / ".env"  # .env 파일을 사용하도록 수정
 
     if env_path.exists():
-        load_dotenv(dotenv_path=env_path)
-        print(f"✅ [시스템] .env 로드 완료: BUCKET_NAME={os.getenv('GCS_BUCKET_NAME')}")
+        load_dotenv(dotenv_path=env_path, override=True)
+        print(f"✅ [시스템] .env 로드 완료 (강제 오버라이드): BUCKET_NAME={os.getenv('GCS_BUCKET_NAME')}")
     else:
         print("⚠️ [시스템] .env 파일을 찾을 수 없거나 로드할 수 없습니다.")
+
+# 0. ADK App 인스턴스 생성 (Reasoning Engine 및 agent_engine_app에서 사용)
+def _get_app():
+    from .agents.root_coordinator import get_root_agent
+    return App(name="app", root_agent=get_root_agent())
+
+init_env()
+app = _get_app()
+
+
 
 
 async def run_agent_query(user_input: str, session_id: str, runner: adk.Runner):
@@ -40,7 +55,7 @@ async def run_agent_query(user_input: str, session_id: str, runner: adk.Runner):
     
     response_text = ""
     for event in events:
-        if event.is_final_response():
+        if event.is_final_response() and event.content and event.content.parts is not None:
             response_text = "".join([part.text for part in event.content.parts if hasattr(part, 'text') and part.text])
     return response_text
 

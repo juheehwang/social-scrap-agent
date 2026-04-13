@@ -116,7 +116,7 @@ def get_or_create_ca_agent() -> str:
         raise ValueError("GOOGLE_CLOUD_PROJECT or GCP_PROJECT is missing. Run 'make setup-env' first.")
     dataset_id = os.getenv("BQ_DATASET_ID") or "social_dataset"
     location = "global"
-    data_agent_id = "social_scrap_analytics_agent_v8"
+    data_agent_id = "social_scrap_analytics_agent_v9"
     
     agent_path = f"projects/{project_id}/locations/{location}/dataAgents/{data_agent_id}"
     
@@ -239,7 +239,7 @@ def execute_conversational_analytics(query: str, session_id: str = "default_sess
         return f"❌ Failed to initialize CA API Agent: {e}"
 
     # Setup Conversation
-    conversation_id = f"ca_api_v8_{session_id}"
+    conversation_id = f"ca_api_v9_{session_id}"
     conversation_path = f"projects/{project_id}/locations/{location}/conversations/{conversation_id}"
     
     try:
@@ -312,6 +312,11 @@ def execute_conversational_analytics(query: str, session_id: str = "default_sess
     # Format output
     output_lines = []
     
+    if getattr(m, "data", None) and getattr(m.data, "generated_sql", None):
+        pass # SQL is captured correctly above
+        
+    if sql_generated:
+       output_lines.append(f"**💡 생성된 SQL 쿼리:**\n```sql\n{sql_generated}\n```\n")
         
     if data_rows:
         df = pd.DataFrame(data_rows)

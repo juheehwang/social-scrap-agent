@@ -47,6 +47,7 @@ playground:
 	@echo "==============================================================================="
 	@export UV_INDEX_STAGING_USERNAME=oauth2accesstoken; \
 	export UV_INDEX_STAGING_PASSWORD=$$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token); \
+	export GOOGLE_CLOUD_LOCATION=global; \
 	uv run adk web . --port 8501 --reload_agents
 
 # ==============================================================================
@@ -93,18 +94,20 @@ register-gemini-enterprise:
 	fi
 
 	@echo "🔍 Checking for existing Agent ID..."; \
-	AGENT_ID=$$(curl -s -H "Authorization: Bearer $(ACCESS_TOKEN)" -H "Content-Type: application/json" -H "X-Goog-User-Project: $(PROJECT_ID)" "https://${GEMINI_ENTERPRISE_REGION}-discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${GEMINI_ENTERPRISE_REGION}/collections/default_collection/engines/${GEMINI_ENTERPRISE_APP_ID}/assistants/default_assistant/agents" | jq -r '.agents[] | select(.displayName == "$(DISPLAY_NAME)") | .name | split("/") | last'); \
-    echo "Extracted Agent ID: $$AGENT_ID"; \
+	# 기존 Agent ID 추출 (DISPLAY_NAME 변수 처리 강화)
+	AGENT_ID=$$(curl -s -H "Authorization: Bearer $(ACCESS_TOKEN)" -H "Content-Type: application/json" -H "X-Goog-User-Project: $(PROJECT_ID)" "https://${GEMINI_ENTERPRISE_REGION}-discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${GEMINI_ENTERPRISE_REGION}/collections/default_collection/engines/${GEMINI_ENTERPRISE_APP_ID}/assistants/default_assistant/agents" | jq -r --arg name "$(DISPLAY_NAME)" '.agents[] | select(.displayName == $$name) | .name | split("/") | last'); \
+	echo "Extracted Agent ID: $$AGENT_ID"; \
+	\
 	if [ -n "$$AGENT_ID" ] && [ "$$AGENT_ID" != "null" ]; then \
 		echo "Existing Agent ($$AGENT_ID) found. Deleting for re-registration..."; \
 		\
 		echo "[1/2] Deleting Agent..."; \
-		curl -X DELETE \
+		curl -s -X DELETE \
 			-H "Authorization: Bearer $(ACCESS_TOKEN)" \
 			"https://${GEMINI_ENTERPRISE_REGION}-discoveryengine.googleapis.com/v1alpha/projects/$(PROJECT_ID)/locations/${GEMINI_ENTERPRISE_REGION}/collections/default_collection/engines/${GEMINI_ENTERPRISE_APP_ID}/assistants/default_assistant/agents/$$AGENT_ID"; \
 		\
 		echo "\n[2/2] Deleting Authorization..."; \
-		curl -X DELETE \
+		curl -s -X DELETE \
 			-H "Authorization: Bearer $(ACCESS_TOKEN)" \
 			-H "X-Goog-User-Project: $(PROJECT_ID)" \
 			"https://$(GEMINI_ENTERPRISE_REGION)-discoveryengine.googleapis.com/v1alpha/projects/$(PROJECT_ID)/locations/$(GEMINI_ENTERPRISE_REGION)/authorizations/$(AUTH_ID_TO_USE)"; \
@@ -113,14 +116,22 @@ register-gemini-enterprise:
 	else \
 		echo "No existing '$(DISPLAY_NAME)' Agent found. Proceeding with registration."; \
 	fi
-
-	@echo "1️⃣  Registering Authorization..."; \
+    
+	@echo "\n1️⃣  Registering Authorization (Scope Fix Applied)..."; \
 	curl -X POST \
 		-H "Authorization: Bearer $(ACCESS_TOKEN)" \
 		-H "Content-Type: application/json" \
 		-H "X-Goog-User-Project: $(PROJECT_ID)" \
 		"https://$(GEMINI_ENTERPRISE_REGION)-discoveryengine.googleapis.com/v1alpha/projects/$(PROJECT_ID)/locations/$(GEMINI_ENTERPRISE_REGION)/authorizations?authorizationId=$(AUTH_ID_TO_USE)" \
-		-d '{"name": "projects/$(PROJECT_NUMBER)/locations/$(GEMINI_ENTERPRISE_REGION)/authorizations/$(AUTH_ID_TO_USE)", "serverSideOauth2": {"clientId": "$(CLIENT_ID)", "clientSecret": "$(CLIENT_SECRET)", "authorizationUri": "https://accounts.google.com/o/oauth2/v2/auth?client_id=$(CLIENT_ID)&redirect_uri=https%3A%2F%2Fvertexaisearch.cloud.google.com%2Fstatic%2Foauth%2Foauth.html&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform&include_granted_scopes=true&response_type=code&access_type=offline&prompt=consent", "tokenUri": "https://oauth2.googleapis.com/token"}}'
+		-d '{ \
+			"name": "projects/$(PROJECT_NUMBER)/locations/$(GEMINI_ENTERPRISE_REGION)/authorizations/$(AUTH_ID_TO_USE)", \
+			"serverSideOauth2": { \
+				"clientId": "$(CLIENT_ID)", \
+				"clientSecret": "$(CLIENT_SECRET)", \
+				"authorizationUri":  "https://accounts.google.com/o/oauth2/v2/auth?client_id=$(CLIENT_ID)&redirect_uri=https%3A%2F%2Fvertexaisearch.cloud.google.com%2Fstatic%2Foauth%2Foauth.html&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform&include_granted_scopes=true&response_type=code&access_type=offline&prompt=consent", \
+				"tokenUri": "https://oauth2.googleapis.com/token" \
+			} \
+		}'
 
 	@echo "\n2️⃣  Registering Agent..."; \
 	curl -X POST \
@@ -128,8 +139,16 @@ register-gemini-enterprise:
 		-H "Content-Type: application/json" \
 		-H "X-Goog-User-Project: $(PROJECT_ID)" \
 		"https://$(GEMINI_ENTERPRISE_REGION)-discoveryengine.googleapis.com/v1alpha/projects/$(PROJECT_ID)/locations/$(GEMINI_ENTERPRISE_REGION)/collections/default_collection/engines/$(GEMINI_ENTERPRISE_APP_ID)/assistants/default_assistant/agents" \
-		-d '{"displayName": "$(DISPLAY_NAME)", "description": "Social Scrap Agent with ADK", "adk_agent_definition": { "provisioned_reasoning_engine": { "reasoning_engine": "$(AGENT_ENGINE_RESOURCE_NAME)" } }, "authorization_config": {"tool_authorizations": ["projects/$(PROJECT_NUMBER)/locations/$(GEMINI_ENTERPRISE_REGION)/authorizations/$(AUTH_ID_TO_USE)"]}}'
-
+		-d '{ \
+			"displayName": "$(DISPLAY_NAME)", \
+			"description": "Social Scrap Agent with ADK", \
+			"adk_agent_definition": { \
+				"provisioned_reasoning_engine": { "reasoning_engine": "$(AGENT_ENGINE_RESOURCE_NAME)" } \
+			}, \
+			"authorization_config": { \
+				"tool_authorizations": ["projects/$(PROJECT_NUMBER)/locations/$(GEMINI_ENTERPRISE_REGION)/authorizations/$(AUTH_ID_TO_USE)"] \
+			} \
+		}'
 # ==============================================================================
 # Infrastructure Setup
 # ==============================================================================
