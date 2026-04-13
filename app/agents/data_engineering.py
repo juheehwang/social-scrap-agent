@@ -3,14 +3,14 @@ import vertexai
 from google.adk.agents import Agent
 from app.tools.bq_loader import load_daily_report_to_bigquery
 
-# 1. 시스템 환경 변수 강제 설정 (Playground/ADK 필수 설정)
-os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
-os.environ["GOOGLE_CLOUD_PROJECT"] = "my-youtube-scraper-489216"
+# 1. 시스템 환경 변수 설정 (ADK 필수 설정)
+project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT")
+location = os.getenv("GOOGLE_CLOUD_LOCATION", "global")
 
 # 2. Vertex AI 초기화
 vertexai.init(
-    project=os.environ["GOOGLE_CLOUD_PROJECT"],
-    location=os.environ["GOOGLE_CLOUD_LOCATION"]
+    project=project_id,
+    location=location
 )
 
 def get_data_engineering_agent() -> Agent:

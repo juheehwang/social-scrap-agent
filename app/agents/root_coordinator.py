@@ -1,6 +1,7 @@
 import os
 import vertexai
 from google.adk.agents import Agent
+from google.adk.models.google_llm import Gemini
 from google.adk.tools.agent_tool import AgentTool
 from app.tools.scout_tool import scrap_and_upload
 from app.agents.data_engineering import get_data_engineering_agent
@@ -11,7 +12,8 @@ def get_root_agent() -> Agent:
     project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT")
     if not project_id:
         raise ValueError("GOOGLE_CLOUD_PROJECT or GCP_PROJECT is missing. Run 'make setup-env' first.")
-    vertexai.init(project=project_id, location='us-central1')
+    location = os.getenv("GOOGLE_CLOUD_LOCATION") or "global"
+    vertexai.init(project=project_id, location=location)
 
     # 1. 하위 에이전트 인스턴스화
     data_eng_agent = get_data_engineering_agent()
@@ -21,7 +23,7 @@ def get_root_agent() -> Agent:
     return Agent(
         name="root_coordinator",
         # gemini-3.1-pro-preview 모델 사용
-        model="gemini-3.1-pro-preview", 
+        model=Gemini(model="gemini-3.1-pro-preview"), 
         description="Coordinator that oversees the full social data pipeline (collection, loading, and analysis). ",
         instruction=(
             "You are a coordinator that oversees the full social data pipeline (collection, loading, and analysis). "

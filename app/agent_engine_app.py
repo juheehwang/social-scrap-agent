@@ -84,8 +84,8 @@ class CustomMemoryBankService(BaseMemoryService):
               'user_id': session.user_id,
           },
           config={
-             'wait_for_completion': False
-             },
+              'wait_for_completion': False
+              },
       )
     else:
       logging.info('[CustomMemoryBankService] No events to add to memory.')
@@ -183,11 +183,12 @@ class AgentEngineApp(AdkApp):
        await self.memory_service.add_session_to_memory(session)
 
 # Environment variables for configuration
-gemini_location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+# LLM API는 global을 쓰지만, Reasoning Engine(Session/Memory 리소스)은 특정 리전에 배포됩니다.
+agent_region = os.environ.get("GOOGLE_CLOUD_REGION", "us-central1")
 project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
 logs_bucket_name = os.environ.get("LOGS_BUCKET_NAME")
 
-# Create the Agent Engine instance
+# Create the Agent Engine instance (Initial vertexai.init(location="global") happens inside app.agent)
 agent_engine = AgentEngineApp(
     agent=adk_app.root_agent,
     artifact_service_builder=lambda: (
@@ -196,13 +197,13 @@ agent_engine = AgentEngineApp(
         else InMemoryArtifactService()
     ),
     session_service_builder=lambda: (
-        VertexAiSessionService(project=project_id, location=gemini_location)
+        VertexAiSessionService(project=project_id, location=agent_region)
         if project_id
         else InMemorySessionService()
     ),
     memory_service_builder=lambda: CustomMemoryBankService(
         project=project_id,
-        location=gemini_location,
+        location=agent_region,
     ),
 )
 

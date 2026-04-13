@@ -2,6 +2,9 @@ import os
 import re
 import json
 import asyncio
+import vertexai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,7 +33,7 @@ async def analyze_comment(comment: str, model) -> dict:
             model.models.generate_content,
             model="gemini-3.1-pro-preview",
             contents=prompt,
-            config=GenerateContentConfig(temperature=1),  # thinking 모델은 temperature=1 필요
+            config=types.GenerateContentConfig(temperature=1.0),
         )
         raw_text = response.text.strip()
         
@@ -38,16 +41,15 @@ async def analyze_comment(comment: str, model) -> dict:
         clean_text = re.sub(r"<thinking>.*?</thinking>", "", raw_text, flags=re.DOTALL).strip()
         # 2. 마크다운 코드 블록 제거
         clean_text = re.sub(r"```(?:json)?", "", clean_text).replace("```", "").strip()
-        # 3. JSON 객체 {}만 정확히 뽑아내기 (앞뒤 불필요한 텍스트 제거)
+        # 3. JSON 객체 {}만 정확히 뽑아내기
         json_match = re.search(r"\{.*?\}", clean_text, flags=re.DOTALL)
         if not json_match:
-            print(f"⚠️ JSON을 찾을 수 없음. 응답: {raw_text[:200]}")
             return {"comment": comment, "reaction": "중립", "comment_keyword": ""}
         
         result_json = json.loads(json_match.group())
         raw_reaction = result_json.get("reaction", "neutral").lower()
 
-        # English to Korean mapping for DB consistency
+        # English to Korean mapping
         reaction_map = {
             "positive": "긍정",
             "negative": "부정",
@@ -76,15 +78,18 @@ async def analyze_comments_with_gemini(comments_list: list[str]) -> list[dict]:
     Returns:
         [{"comment": str, "reaction": str, "comment_keyword": str}, ...]
     """
-    import vertexai
-    from google import genai
-
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT")
     if not project_id:
         raise ValueError("GOOGLE_CLOUD_PROJECT or GCP_PROJECT is missing. Run 'make setup-env' first.")
-    vertexai.init(project=project_id, location="global")
+    location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+    vertexai.init(project=project_id, location=location)
 
-    client = genai.Client(vertexai=True)
+    # genai Client는 모델(3.1 pro preview)이 있는 global 위치를 명시적으로 사용해야 함
+    client = genai.Client(
+        vertexai=True,
+        project=project_id,
+        location=os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
+    )
 
     # 빈 댓글 제외 후, 병렬 분석 실행
     tasks = [analyze_comment(c, client) for c in comments_list if c and c.strip()]
@@ -93,20 +98,26 @@ async def analyze_comments_with_gemini(comments_list: list[str]) -> list[dict]:
     print(f"📝 [Gemini Analyzer] 댓글 {len(results)}개 분석 완료")
     return list(results)
 
+
+
 async def analyze_video_content(video_url: str) -> str:
     """
-    영상 URL을 입력받아 Gemini AI Studio API를 통해 영상 구조와 대사를 상세 분석합니다.
+    영상 URL(GCS 경로 추천)을 입력받아 Vertex AI Gemini를 통해 영상 구조와 대사를 상세 분석합니다.
     """
-    import os
-    import asyncio
-    from google import genai
-    from google.genai import types
+    # 1. 환경 변수에서 프로젝트 정보 가져오기
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return "⚠️ 영상 분석 에러: .env 파일에 GEMINI_API_KEY가 없습니다."
+    if not project_id:
+        return "⚠️ 영상 분석 에러: GOOGLE_CLOUD_PROJECT 환경 변수가 설정되지 않았습니다."
 
-    client = genai.Client(api_key=api_key, vertexai=False)
+    # 2. Vertex AI 초기화 및 클라이언트 생성
+    # vertexai=True 설정을 통해 GCP 모드로 동작하게 합니다.
+    client = genai.Client(
+        vertexai=True,
+        project=project_id,
+        location=os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
+    )
 
     prompt = """
     Analyze the audio of the provided video from start to finish and extract it as text.
@@ -121,9 +132,11 @@ async def analyze_video_content(video_url: str) -> str:
     """
 
     try:
+        # 3. 모델 호출 (Vertex AI 엔드포인트 사용)
+        # vertexai=True일 경우 모델명 앞에 'publishers/google/models/'는 생략 가능합니다.
         response = await asyncio.to_thread(
             client.models.generate_content,
-            model='gemini-3.1-pro-preview',
+            model="gemini-3.1-pro-preview",
             contents=[
                 types.Part.from_uri(file_uri=video_url, mime_type='video/mp4'),
                 prompt,
@@ -131,6 +144,5 @@ async def analyze_video_content(video_url: str) -> str:
         )
         return response.text
     except Exception as e:
-        print(f"⚠️ [Gemini Analyzer] 영상 분석 오류: {e}")
+        print(f"⚠️ [Vertex AI Analyzer] 영상 분석 오류: {e}")
         return None
-
